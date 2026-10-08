@@ -135,6 +135,66 @@
   .icon-btn:hover { background: var(--bg); }
   .icon-btn.del:hover { background: var(--danger); color: var(--bg); }
 
+  .machine {
+    margin-bottom: 28px;
+  }
+  .machine-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .machine-name {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .machine-host {
+    font-size: 0.8rem;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .machine-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 4px;
+  }
+  .machine-actions .icon-btn { background: var(--surface); }
+  .machine-actions .icon-btn:hover { background: var(--surface-hover); }
+  .machine-actions .icon-btn.del:hover { background: var(--danger); color: var(--bg); }
+
+  .card-port {
+    font-size: 0.85rem;
+    color: var(--accent);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  .header-actions { display: flex; gap: 8px; }
+  .add-btn.sub {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+
+  .field select {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-family: inherit;
+  }
+  .field select:focus { outline: none; border-color: var(--accent); }
+  .field-hint {
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-top: 4px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
   .empty {
     text-align: center;
     color: var(--muted);
@@ -239,17 +299,20 @@
       <h1>🖥️ Console Hub</h1>
       <div class="subtitle">プロジェクト別ターミナル</div>
     </div>
-    <button class="add-btn" onclick="openModal()">+ 追加</button>
+    <div class="header-actions">
+      <button class="add-btn sub" onclick="openMachineModal()">+ マシン</button>
+      <button class="add-btn" onclick="openModal()">+ 追加</button>
+    </div>
   </header>
 
-  <div id="grid" class="grid"></div>
+  <div id="list"></div>
 
   <div class="footer">
     データはこのブラウザのlocalStorageに保存されています
   </div>
 </div>
 
-<!-- Add/Edit Modal -->
+<!-- Project Modal -->
 <div class="modal-bg" id="modalBg" onclick="closeModalIfBg(event)">
   <div class="modal">
     <h2 id="modalTitle">新しいプロジェクトを追加</h2>
@@ -258,8 +321,13 @@
       <input type="text" id="nameInput" placeholder="Temportal" autocomplete="off">
     </div>
     <div class="field">
-      <label for="urlInput">URL</label>
-      <input type="text" id="urlInput" placeholder="http://100.96.72.56:3001/" autocomplete="off">
+      <label for="machineSelect">マシン</label>
+      <select id="machineSelect" onchange="updateUrlHint()"></select>
+    </div>
+    <div class="field">
+      <label for="portInput">ポート番号</label>
+      <input type="number" id="portInput" placeholder="3001" min="1" max="65535" autocomplete="off" oninput="updateUrlHint()">
+      <div class="field-hint" id="urlHint"></div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
@@ -268,44 +336,117 @@
   </div>
 </div>
 
-<script>
-  const STORAGE_KEY = 'consoleHubItems_v1';
-  let editingIndex = null;
+<!-- Machine Modal -->
+<div class="modal-bg" id="machineModalBg" onclick="closeModalIfBg(event)">
+  <div class="modal">
+    <h2 id="machineModalTitle">新しいマシンを追加</h2>
+    <div class="field">
+      <label for="machineNameInput">名前</label>
+      <input type="text" id="machineNameInput" placeholder="自宅サーバー" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="hostInput">IPアドレス / ホスト</label>
+      <input type="text" id="hostInput" placeholder="100.96.72.56" autocomplete="off">
+      <div class="field-hint">https の場合は https://ホスト と入力</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
+      <button class="btn btn-primary" onclick="saveMachine()">保存</button>
+    </div>
+  </div>
+</div>
 
-  function loadItems() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return [];
-      return JSON.parse(raw);
-    } catch (e) {
-      return [];
-    }
+<script>
+  const STORAGE_KEY = 'consoleHubData_v2';
+  const OLD_STORAGE_KEY = 'consoleHubItems_v1';
+  let editingId = null;
+  let editingMachineId = null;
+
+  function uid() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   }
 
-  function saveItems(items) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  // v1 (name + 完全なURL) → v2 (マシン + ポート) へ移行
+  function migrateV1() {
+    let old;
+    try { old = JSON.parse(localStorage.getItem(OLD_STORAGE_KEY) || '[]'); } catch (e) { old = []; }
+    const data = { machines: [], items: [] };
+    for (const o of old) {
+      let u;
+      try { u = new URL(o.url); } catch (e) { continue; }
+      const host = (u.protocol === 'https:' ? 'https://' : '') + u.hostname;
+      let m = data.machines.find(m => m.host === host);
+      if (!m) {
+        m = { id: uid(), name: u.hostname, host };
+        data.machines.push(m);
+      }
+      const port = Number(u.port) || (u.protocol === 'https:' ? 443 : 80);
+      const path = u.pathname === '/' ? '' : u.pathname + u.search + u.hash;
+      data.items.push({ id: uid(), machineId: m.id, name: o.name, port, path });
+    }
+    return data;
+  }
+
+  function loadData() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    const data = migrateV1();
+    saveData(data);
+    return data;
+  }
+
+  function saveData(data) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  }
+
+  function hostUrl(host) {
+    return /^https?:\/\//i.test(host) ? host.replace(/\/+$/, '') : 'http://' + host;
+  }
+
+  function itemUrl(machine, item) {
+    return `${hostUrl(machine.host)}:${item.port}${item.path || '/'}`;
   }
 
   function render() {
-    const items = loadItems();
-    const grid = document.getElementById('grid');
+    const data = loadData();
+    const list = document.getElementById('list');
 
-    if (items.length === 0) {
-      grid.outerHTML = '<div id="grid" class="empty">まだ何もないみたいだ。<br>右上の「+ 追加」から始めよう。</div>';
+    if (data.machines.length === 0) {
+      list.innerHTML = '<div class="empty">まだ何もないみたいだ。<br>右上の「+ マシン」からIPアドレスを登録しよう。</div>';
       return;
     }
 
-    grid.className = 'grid';
-    grid.innerHTML = items.map((item, i) => `
-      <a class="card" href="${escapeHtml(item.url)}" target="_blank" rel="noopener">
-        <div class="card-name">${escapeHtml(item.name)}</div>
-        <div class="card-url">${escapeHtml(item.url)}</div>
-        <div class="card-actions">
-          <button class="icon-btn" onclick="event.preventDefault();event.stopPropagation();editItem(${i})" title="編集">✏️</button>
-          <button class="icon-btn del" onclick="event.preventDefault();event.stopPropagation();deleteItem(${i})" title="削除">🗑</button>
-        </div>
-      </a>
-    `).join('');
+    list.innerHTML = data.machines.map(m => {
+      const items = data.items
+        .filter(it => it.machineId === m.id)
+        .sort((a, b) => a.port - b.port);
+      const cards = items.length === 0
+        ? '<div class="empty" style="padding:24px">プロジェクトなし</div>'
+        : `<div class="grid">${items.map(it => `
+          <a class="card" href="${escapeHtml(itemUrl(m, it))}" target="_blank" rel="noopener">
+            <div class="card-name">${escapeHtml(it.name)}</div>
+            <div class="card-port">:${it.port}${escapeHtml(it.path || '')}</div>
+            <div class="card-actions">
+              <button class="icon-btn" onclick="event.preventDefault();event.stopPropagation();editItem('${it.id}')" title="編集">✏️</button>
+              <button class="icon-btn del" onclick="event.preventDefault();event.stopPropagation();deleteItem('${it.id}')" title="削除">🗑</button>
+            </div>
+          </a>`).join('')}</div>`;
+      return `
+        <section class="machine">
+          <div class="machine-head">
+            <span class="machine-name">${escapeHtml(m.name)}</span>
+            <span class="machine-host">${escapeHtml(m.host)}</span>
+            <div class="machine-actions">
+              <button class="icon-btn" onclick="openModal('${m.id}')" title="このマシンにプロジェクトを追加">＋</button>
+              <button class="icon-btn" onclick="editMachine('${m.id}')" title="マシンを編集">✏️</button>
+              <button class="icon-btn del" onclick="deleteMachine('${m.id}')" title="マシンを削除">🗑</button>
+            </div>
+          </div>
+          ${cards}
+        </section>`;
+    }).join('');
   }
 
   function escapeHtml(s) {
@@ -317,89 +458,162 @@
       .replace(/'/g, '&#39;');
   }
 
-  function openModal() {
-    editingIndex = null;
+  function fillMachineSelect(selectedId) {
+    const data = loadData();
+    const sel = document.getElementById('machineSelect');
+    sel.innerHTML = data.machines.map(m =>
+      `<option value="${m.id}">${escapeHtml(m.name)} (${escapeHtml(m.host)})</option>`
+    ).join('');
+    if (selectedId) sel.value = selectedId;
+  }
+
+  function updateUrlHint() {
+    const data = loadData();
+    const m = data.machines.find(m => m.id === document.getElementById('machineSelect').value);
+    const port = document.getElementById('portInput').value.trim();
+    document.getElementById('urlHint').textContent =
+      m ? `${hostUrl(m.host)}:${port || '____'}/` : '';
+  }
+
+  function openModal(machineId) {
+    const data = loadData();
+    if (data.machines.length === 0) {
+      openMachineModal();
+      return;
+    }
+    editingId = null;
     document.getElementById('modalTitle').textContent = '新しいプロジェクトを追加';
     document.getElementById('nameInput').value = '';
-    document.getElementById('urlInput').value = '';
+    document.getElementById('portInput').value = '';
+    fillMachineSelect(machineId || data.machines[0].id);
+    updateUrlHint();
     document.getElementById('modalBg').classList.add('show');
     setTimeout(() => document.getElementById('nameInput').focus(), 50);
   }
 
-  function editItem(index) {
-    const items = loadItems();
-    const item = items[index];
+  function editItem(id) {
+    const data = loadData();
+    const item = data.items.find(it => it.id === id);
     if (!item) return;
-    editingIndex = index;
+    editingId = id;
     document.getElementById('modalTitle').textContent = '編集';
     document.getElementById('nameInput').value = item.name;
-    document.getElementById('urlInput').value = item.url;
+    document.getElementById('portInput').value = item.port;
+    fillMachineSelect(item.machineId);
+    updateUrlHint();
     document.getElementById('modalBg').classList.add('show');
-    setTimeout(() => document.getElementById('nameInput').focus(), 50);
+    setTimeout(() => document.getElementById('portInput').focus(), 50);
   }
 
-  function deleteItem(index) {
-    const items = loadItems();
-    const item = items[index];
+  function deleteItem(id) {
+    const data = loadData();
+    const item = data.items.find(it => it.id === id);
     if (!item) return;
     if (!confirm(`「${item.name}」を削除しますか？`)) return;
-    items.splice(index, 1);
-    saveItems(items);
-    // re-render: if grid was replaced by empty state, restore container
-    const oldGrid = document.getElementById('grid');
-    if (oldGrid && !oldGrid.classList.contains('grid')) {
-      const newGrid = document.createElement('div');
-      newGrid.id = 'grid';
-      newGrid.className = 'grid';
-      oldGrid.replaceWith(newGrid);
-    }
+    data.items = data.items.filter(it => it.id !== id);
+    saveData(data);
     render();
   }
 
   function saveItem() {
     const name = document.getElementById('nameInput').value.trim();
-    let url = document.getElementById('urlInput').value.trim();
-    if (!name || !url) {
-      alert('両方入力してください');
+    const machineId = document.getElementById('machineSelect').value;
+    const port = Number(document.getElementById('portInput').value.trim());
+    if (!name || !machineId || !port) {
+      alert('名前・マシン・ポート番号を入力してください');
       return;
     }
-    // 簡易URL補正: http:// が無ければ付ける
-    if (!/^https?:\/\//i.test(url)) {
-      url = 'http://' + url;
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      alert('ポート番号は 1〜65535 で入力してください');
+      return;
     }
-    const items = loadItems();
-    if (editingIndex !== null) {
-      items[editingIndex] = { name, url };
+    const data = loadData();
+    if (editingId !== null) {
+      const item = data.items.find(it => it.id === editingId);
+      if (item) Object.assign(item, { name, machineId, port });
     } else {
-      items.push({ name, url });
+      data.items.push({ id: uid(), machineId, name, port, path: '' });
     }
-    saveItems(items);
+    saveData(data);
     closeModal();
-    // 空状態からの復帰
-    const oldGrid = document.getElementById('grid');
-    if (oldGrid && !oldGrid.classList.contains('grid')) {
-      const newGrid = document.createElement('div');
-      newGrid.id = 'grid';
-      newGrid.className = 'grid';
-      oldGrid.replaceWith(newGrid);
+    render();
+  }
+
+  function openMachineModal() {
+    editingMachineId = null;
+    document.getElementById('machineModalTitle').textContent = '新しいマシンを追加';
+    document.getElementById('machineNameInput').value = '';
+    document.getElementById('hostInput').value = '';
+    document.getElementById('machineModalBg').classList.add('show');
+    setTimeout(() => document.getElementById('machineNameInput').focus(), 50);
+  }
+
+  function editMachine(id) {
+    const data = loadData();
+    const m = data.machines.find(m => m.id === id);
+    if (!m) return;
+    editingMachineId = id;
+    document.getElementById('machineModalTitle').textContent = 'マシンを編集';
+    document.getElementById('machineNameInput').value = m.name;
+    document.getElementById('hostInput').value = m.host;
+    document.getElementById('machineModalBg').classList.add('show');
+    setTimeout(() => document.getElementById('hostInput').focus(), 50);
+  }
+
+  function deleteMachine(id) {
+    const data = loadData();
+    const m = data.machines.find(m => m.id === id);
+    if (!m) return;
+    const count = data.items.filter(it => it.machineId === id).length;
+    const msg = count > 0
+      ? `「${m.name}」とそのプロジェクト${count}件を削除しますか？`
+      : `「${m.name}」を削除しますか？`;
+    if (!confirm(msg)) return;
+    data.machines = data.machines.filter(x => x.id !== id);
+    data.items = data.items.filter(it => it.machineId !== id);
+    saveData(data);
+    render();
+  }
+
+  function saveMachine() {
+    let host = document.getElementById('hostInput').value.trim();
+    const name = document.getElementById('machineNameInput').value.trim();
+    if (!host) {
+      alert('IPアドレスを入力してください');
+      return;
     }
+    // http:// や末尾の / は不要なので取り除く（https:// は残す）
+    host = host.replace(/^http:\/\//i, '').replace(/\/+$/, '');
+    const data = loadData();
+    if (editingMachineId !== null) {
+      const m = data.machines.find(m => m.id === editingMachineId);
+      if (m) Object.assign(m, { name: name || host, host });
+    } else {
+      data.machines.push({ id: uid(), name: name || host, host });
+    }
+    saveData(data);
+    closeModal();
     render();
   }
 
   function closeModal() {
     document.getElementById('modalBg').classList.remove('show');
+    document.getElementById('machineModalBg').classList.remove('show');
   }
 
   function closeModalIfBg(e) {
-    if (e.target.id === 'modalBg') closeModal();
+    if (e.target.classList.contains('modal-bg')) closeModal();
   }
 
   // Enterキーで保存
   document.addEventListener('keydown', (e) => {
-    const modal = document.getElementById('modalBg');
-    if (!modal.classList.contains('show')) return;
-    if (e.key === 'Enter') saveItem();
+    const itemOpen = document.getElementById('modalBg').classList.contains('show');
+    const machineOpen = document.getElementById('machineModalBg').classList.contains('show');
+    if (!itemOpen && !machineOpen) return;
     if (e.key === 'Escape') closeModal();
+    if (e.key === 'Enter' && !e.isComposing) {
+      if (itemOpen) saveItem(); else saveMachine();
+    }
   });
 
   // 初期レンダー
