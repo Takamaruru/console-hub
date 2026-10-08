@@ -313,7 +313,7 @@
 </div>
 
 <!-- Project Modal -->
-<div class="modal-bg" id="modalBg" onclick="closeModalIfBg(event)">
+<div class="modal-bg" id="modalBg" onmousedown="bgPressed = event.target === this" onclick="closeModalIfBg(event)">
   <div class="modal">
     <h2 id="modalTitle">新しいプロジェクトを追加</h2>
     <div class="field">
@@ -337,7 +337,7 @@
 </div>
 
 <!-- Machine Modal -->
-<div class="modal-bg" id="machineModalBg" onclick="closeModalIfBg(event)">
+<div class="modal-bg" id="machineModalBg" onmousedown="bgPressed = event.target === this" onclick="closeModalIfBg(event)">
   <div class="modal">
     <h2 id="machineModalTitle">新しいマシンを追加</h2>
     <div class="field">
@@ -601,8 +601,11 @@
     document.getElementById('machineModalBg').classList.remove('show');
   }
 
+  // テキスト選択中にマウスが背景で離れても閉じないよう、背景上で押したときだけ閉じる
+  let bgPressed = false;
   function closeModalIfBg(e) {
-    if (e.target.classList.contains('modal-bg')) closeModal();
+    if (bgPressed && e.target.classList.contains('modal-bg')) closeModal();
+    bgPressed = false;
   }
 
   // Enterキーで保存
