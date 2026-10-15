@@ -9,6 +9,10 @@
   try {
     const t = localStorage.getItem('consoleHubTheme');
     if (t && t !== 'mocha') document.documentElement.dataset.theme = t;
+    if (t === 'custom') {
+      const c = JSON.parse(localStorage.getItem('consoleHubCustomTheme') || '{}');
+      for (const k in c) document.documentElement.style.setProperty('--' + k, c[k]);
+    }
   } catch (e) {}
 </script>
 <style>
@@ -237,7 +241,31 @@
   }
   .theme-option:hover { background: var(--surface-hover); }
   .theme-option.active { outline: 1px solid var(--accent); }
+  .theme-menu hr { border: none; border-top: 1px solid var(--border); margin: 6px 4px; }
   .theme-swatch { display: flex; }
+
+  .color-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 14px;
+  }
+  .color-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .color-field input[type="color"] {
+    width: 34px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: none;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
   .theme-swatch span {
     width: 14px;
     height: 14px;
@@ -334,6 +362,7 @@
     gap: 10px;
     justify-content: flex-end;
     margin-top: 18px;
+    flex-wrap: wrap;
   }
   .btn {
     padding: 9px 18px;
@@ -408,6 +437,19 @@
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
       <button class="btn btn-primary" onclick="saveItem()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Custom Theme Modal -->
+<div class="modal-bg" id="themeModalBg" onmousedown="bgPressed = event.target === this" onclick="closeModalIfBg(event)">
+  <div class="modal">
+    <h2>配色をカスタマイズ</h2>
+    <div class="color-grid" id="colorGrid"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="resetCustomColors()" style="margin-right:auto">今のテーマに戻す</button>
+      <button class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
+      <button class="btn btn-primary" onclick="saveCustomTheme()">保存</button>
     </div>
   </div>
 </div>
@@ -675,6 +717,12 @@
   function closeModal() {
     document.getElementById('modalBg').classList.remove('show');
     document.getElementById('machineModalBg').classList.remove('show');
+    const themeModal = document.getElementById('themeModalBg');
+    if (themeModal.classList.contains('show')) {
+      themeModal.classList.remove('show');
+      // プレビューを破棄して保存済みのテーマに戻す（保存時は custom が保存済み）
+      applyTheme(storedTheme());
+    }
   }
 
   // テキスト選択中にマウスが背景で離れても閉じないよう、背景上で押したときだけ閉じる
@@ -694,24 +742,106 @@
     { id: 'gruvbox', name: 'Gruvbox',     colors: ['#282828', '#fabd2f', '#fe8019'] },
   ];
 
+  const CUSTOM_KEY = 'consoleHubCustomTheme';
+  const COLOR_VARS = [
+    { key: 'bg',            label: '背景' },
+    { key: 'surface',       label: 'カード' },
+    { key: 'surface-hover', label: 'カード（ホバー）' },
+    { key: 'border',        label: '枠線' },
+    { key: 'text',          label: '文字' },
+    { key: 'muted',         label: '補助の文字' },
+    { key: 'accent',        label: 'アクセント' },
+    { key: 'accent-2',      label: 'プロジェクト名' },
+    { key: 'danger',        label: '削除ボタン' },
+  ];
+
   function currentTheme() {
     return document.documentElement.dataset.theme || 'mocha';
   }
 
-  function setTheme(id) {
+  function storedTheme() {
+    try { return localStorage.getItem(THEME_KEY) || 'mocha'; } catch (e) { return currentTheme(); }
+  }
+
+  function loadCustomColors() {
+    try { return JSON.parse(localStorage.getItem(CUSTOM_KEY) || 'null'); } catch (e) { return null; }
+  }
+
+  function setColorVars(colors) {
+    const st = document.documentElement.style;
+    for (const v of COLOR_VARS) {
+      if (colors && colors[v.key]) st.setProperty('--' + v.key, colors[v.key]);
+      else st.removeProperty('--' + v.key);
+    }
+  }
+
+  function applyTheme(id) {
     if (id === 'mocha') delete document.documentElement.dataset.theme;
     else document.documentElement.dataset.theme = id;
+    setColorVars(id === 'custom' ? loadCustomColors() : null);
+  }
+
+  function setTheme(id) {
+    applyTheme(id);
     try { localStorage.setItem(THEME_KEY, id); } catch (e) {}
     renderThemeMenu();
   }
 
+  // 今表示されている配色を #rrggbb で取得
+  function computedColors() {
+    const cs = getComputedStyle(document.documentElement);
+    const out = {};
+    for (const v of COLOR_VARS) out[v.key] = cs.getPropertyValue('--' + v.key).trim();
+    return out;
+  }
+
+  function fillColorGrid(colors) {
+    document.getElementById('colorGrid').innerHTML = COLOR_VARS.map(v => `
+      <label class="color-field">
+        <input type="color" data-key="${v.key}" value="${colors[v.key]}" oninput="document.documentElement.style.setProperty('--${v.key}', this.value)">
+        ${v.label}
+      </label>`).join('');
+  }
+
+  function openCustomTheme() {
+    customBase = currentTheme();
+    document.getElementById('themeMenu').classList.remove('show');
+    fillColorGrid(computedColors());
+    document.getElementById('themeModalBg').classList.add('show');
+  }
+
+  // 編集中の色を捨てて、カスタムを開く前のテーマの色に戻す
+  let customBase = 'mocha';
+  function resetCustomColors() {
+    setColorVars(null);
+    applyTheme(customBase);
+    const colors = computedColors();
+    fillColorGrid(colors);
+    setColorVars(colors);
+  }
+
+  function saveCustomTheme() {
+    const colors = {};
+    for (const input of document.querySelectorAll('#colorGrid input')) colors[input.dataset.key] = input.value;
+    try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(colors)); } catch (e) {}
+    setTheme('custom');
+    closeModal();
+  }
+
   function renderThemeMenu() {
     const cur = currentTheme();
+    const custom = loadCustomColors();
     document.getElementById('themeMenu').innerHTML = THEMES.map(t => `
       <button class="theme-option${t.id === cur ? ' active' : ''}" onclick="setTheme('${t.id}')">
         <span class="theme-swatch">${t.colors.map(c => `<span style="background:${c}"></span>`).join('')}</span>
         ${escapeHtml(t.name)}
-      </button>`).join('');
+      </button>`).join('') + (custom ? `
+      <button class="theme-option${cur === 'custom' ? ' active' : ''}" onclick="setTheme('custom')">
+        <span class="theme-swatch">${['bg', 'accent', 'accent-2'].map(k => `<span style="background:${custom[k]}"></span>`).join('')}</span>
+        カスタム
+      </button>` : '') + `
+      <hr>
+      <button class="theme-option" onclick="openCustomTheme()">🖌 配色をカスタマイズ…</button>`;
   }
 
   function toggleThemeMenu(e) {
@@ -730,10 +860,11 @@
   document.addEventListener('keydown', (e) => {
     const itemOpen = document.getElementById('modalBg').classList.contains('show');
     const machineOpen = document.getElementById('machineModalBg').classList.contains('show');
-    if (!itemOpen && !machineOpen) return;
+    const themeOpen = document.getElementById('themeModalBg').classList.contains('show');
+    if (!itemOpen && !machineOpen && !themeOpen) return;
     if (e.key === 'Escape') closeModal();
     if (e.key === 'Enter' && !e.isComposing) {
-      if (itemOpen) saveItem(); else saveMachine();
+      if (itemOpen) saveItem(); else if (machineOpen) saveMachine(); else saveCustomTheme();
     }
   });
 
