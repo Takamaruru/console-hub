@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Console Hub</title>
+<script>
+  // 描画前にテーマを適用してちらつきを防ぐ
+  try {
+    const t = localStorage.getItem('consoleHubTheme');
+    if (t && t !== 'mocha') document.documentElement.dataset.theme = t;
+  } catch (e) {}
+</script>
 <style>
   :root {
     --bg: #1e1e2e;
@@ -16,6 +23,33 @@
     --success: #a6e3a1;
     --muted: #6c7086;
     --border: #45475a;
+  }
+
+  /* テーマ（data-theme 未指定時は上の Mocha） */
+  :root[data-theme="latte"] {
+    --bg: #eff1f5; --surface: #dce0e8; --surface-hover: #ccd0da; --text: #4c4f69;
+    --accent: #8839ef; --accent-2: #d20f8c; --danger: #d20f39; --success: #40a02b;
+    --muted: #6c6f85; --border: #bcc0cc;
+  }
+  :root[data-theme="nord"] {
+    --bg: #2e3440; --surface: #3b4252; --surface-hover: #434c5e; --text: #eceff4;
+    --accent: #88c0d0; --accent-2: #8fbcbb; --danger: #bf616a; --success: #a3be8c;
+    --muted: #7b88a1; --border: #4c566a;
+  }
+  :root[data-theme="dracula"] {
+    --bg: #282a36; --surface: #343746; --surface-hover: #44475a; --text: #f8f8f2;
+    --accent: #bd93f9; --accent-2: #ff79c6; --danger: #ff5555; --success: #50fa7b;
+    --muted: #6272a4; --border: #44475a;
+  }
+  :root[data-theme="tokyo"] {
+    --bg: #1a1b26; --surface: #24283b; --surface-hover: #2f3549; --text: #c0caf5;
+    --accent: #7aa2f7; --accent-2: #bb9af7; --danger: #f7768e; --success: #9ece6a;
+    --muted: #565f89; --border: #3b4261;
+  }
+  :root[data-theme="gruvbox"] {
+    --bg: #282828; --surface: #3c3836; --surface-hover: #504945; --text: #ebdbb2;
+    --accent: #fabd2f; --accent-2: #fe8019; --danger: #fb4934; --success: #b8bb26;
+    --muted: #928374; --border: #504945;
   }
 
   * { box-sizing: border-box; }
@@ -170,7 +204,47 @@
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
   }
 
-  .header-actions { display: flex; gap: 8px; }
+  .header-actions { display: flex; gap: 8px; position: relative; }
+
+  .theme-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 6px;
+    min-width: 190px;
+    display: none;
+    z-index: 50;
+    box-shadow: 0 8px 24px rgba(0,0,0,.35);
+  }
+  .theme-menu.show { display: block; }
+  .theme-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+  .theme-option:hover { background: var(--surface-hover); }
+  .theme-option.active { outline: 1px solid var(--accent); }
+  .theme-swatch { display: flex; }
+  .theme-swatch span {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 1px solid rgba(128,128,128,.4);
+  }
+  .theme-swatch span + span { margin-left: -4px; }
   .add-btn.sub {
     background: transparent;
     color: var(--accent);
@@ -300,8 +374,10 @@
       <div class="subtitle">プロジェクト別ターミナル</div>
     </div>
     <div class="header-actions">
+      <button class="add-btn sub" onclick="toggleThemeMenu(event)" title="テーマ">🎨</button>
       <button class="add-btn sub" onclick="openMachineModal()">+ マシン</button>
       <button class="add-btn" onclick="openModal()">+ 追加</button>
+      <div class="theme-menu" id="themeMenu"></div>
     </div>
   </header>
 
@@ -607,6 +683,48 @@
     if (bgPressed && e.target.classList.contains('modal-bg')) closeModal();
     bgPressed = false;
   }
+
+  const THEME_KEY = 'consoleHubTheme';
+  const THEMES = [
+    { id: 'mocha',   name: 'Mocha',       colors: ['#1e1e2e', '#cba6f7', '#f5c2e7'] },
+    { id: 'latte',   name: 'Latte (ライト)', colors: ['#eff1f5', '#8839ef', '#d20f8c'] },
+    { id: 'nord',    name: 'Nord',        colors: ['#2e3440', '#88c0d0', '#8fbcbb'] },
+    { id: 'dracula', name: 'Dracula',     colors: ['#282a36', '#bd93f9', '#ff79c6'] },
+    { id: 'tokyo',   name: 'Tokyo Night', colors: ['#1a1b26', '#7aa2f7', '#bb9af7'] },
+    { id: 'gruvbox', name: 'Gruvbox',     colors: ['#282828', '#fabd2f', '#fe8019'] },
+  ];
+
+  function currentTheme() {
+    return document.documentElement.dataset.theme || 'mocha';
+  }
+
+  function setTheme(id) {
+    if (id === 'mocha') delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = id;
+    try { localStorage.setItem(THEME_KEY, id); } catch (e) {}
+    renderThemeMenu();
+  }
+
+  function renderThemeMenu() {
+    const cur = currentTheme();
+    document.getElementById('themeMenu').innerHTML = THEMES.map(t => `
+      <button class="theme-option${t.id === cur ? ' active' : ''}" onclick="setTheme('${t.id}')">
+        <span class="theme-swatch">${t.colors.map(c => `<span style="background:${c}"></span>`).join('')}</span>
+        ${escapeHtml(t.name)}
+      </button>`).join('');
+  }
+
+  function toggleThemeMenu(e) {
+    e.stopPropagation();
+    renderThemeMenu();
+    document.getElementById('themeMenu').classList.toggle('show');
+  }
+
+  // メニューの外をクリックしたら閉じる
+  document.addEventListener('click', (e) => {
+    const menu = document.getElementById('themeMenu');
+    if (!menu.contains(e.target)) menu.classList.remove('show');
+  });
 
   // Enterキーで保存
   document.addEventListener('keydown', (e) => {
